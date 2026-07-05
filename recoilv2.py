@@ -357,10 +357,108 @@ def update_active_window_text():
 # Dear PyGui setup
 # -------------------------
 
+def close_app():
+    dpg.stop_dearpygui()
+
+
+# -------------------------
+# Borderless window dragging
+# -------------------------
+
+TITLE_BAR_HEIGHT = 36
+
+drag_state = {
+    "active": False,
+    "mouse_start": (0, 0),
+    "viewport_start": (0, 0),
+}
+
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+
+def get_cursor_pos() -> tuple[int, int]:
+    point = POINT()
+    ctypes.windll.user32.GetCursorPos(ctypes.byref(point))
+    return point.x, point.y
+
+
+def mouse_is_on_custom_title_bar() -> bool:
+    """
+    Because the Windows border is removed, this checks if the mouse is
+    inside the fake ImGui-style title bar at the top of the viewport.
+    """
+    try:
+        mouse_x, mouse_y = dpg.get_mouse_pos(local=True)
+    except TypeError:
+        mouse_x, mouse_y = dpg.get_mouse_pos()
+
+    try:
+        viewport_width = dpg.get_viewport_width()
+    except Exception:
+        viewport_width = 9999
+
+    # Do not start dragging on the far-right close button area.
+    close_button_area = 55
+
+    return (
+        0 <= mouse_x <= max(viewport_width - close_button_area, 0)
+        and 0 <= mouse_y <= TITLE_BAR_HEIGHT
+    )
+
+
+def start_window_drag(sender, app_data):
+    if not mouse_is_on_custom_title_bar():
+        return
+
+    drag_state["active"] = True
+    drag_state["mouse_start"] = get_cursor_pos()
+
+    viewport_pos = dpg.get_viewport_pos()
+    drag_state["viewport_start"] = (int(viewport_pos[0]), int(viewport_pos[1]))
+
+
+def drag_window(sender, app_data):
+    if not drag_state["active"]:
+        return
+
+    mouse_x, mouse_y = get_cursor_pos()
+    start_mouse_x, start_mouse_y = drag_state["mouse_start"]
+    start_viewport_x, start_viewport_y = drag_state["viewport_start"]
+
+    new_x = start_viewport_x + (mouse_x - start_mouse_x)
+    new_y = start_viewport_y + (mouse_y - start_mouse_y)
+
+    dpg.set_viewport_pos([new_x, new_y])
+
+
+def stop_window_drag(sender, app_data):
+    drag_state["active"] = False
+
+
 def build_gui():
     dpg.create_context()
 
-    with dpg.window(label="Offline Anti-Recoil Tool", width=560, height=520):
+    with dpg.window(
+        label="Offline Anti-Recoil Tool",
+        tag="main_window",
+        no_title_bar=True,
+        no_resize=True,
+        no_move=True,
+        no_collapse=True,
+        no_scrollbar=True,
+        width=580,
+        height=560,
+    ):
+        # Custom draggable ImGui-style top bar because the Windows border is disabled.
+        with dpg.group(horizontal=True):
+            dpg.add_text("Offline Anti-Recoil Tool")
+            dpg.add_spacer(width=330)
+            dpg.add_button(label="X", width=35, callback=close_app)
+
+        dpg.add_separator()
+
         dpg.add_text("Offline-only recoil compensation")
         dpg.add_text("Toggle with F8")
         dpg.add_separator()
@@ -450,8 +548,20 @@ def build_gui():
         dpg.add_text("Delay: 0.010 to 0.016")
         dpg.add_text("Jitter: 0.1 to 0.5")
 
-    dpg.create_viewport(title="Offline Anti-Recoil Tool", width=580, height=560)
+    with dpg.handler_registry():
+        dpg.add_mouse_down_handler(button=dpg.mvMouseButton_Left, callback=start_window_drag)
+        dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Left, callback=drag_window)
+        dpg.add_mouse_release_handler(button=dpg.mvMouseButton_Left, callback=stop_window_drag)
+
+    dpg.create_viewport(
+        title="Offline Anti-Recoil Tool",
+        width=580,
+        height=560,
+        decorated=False,
+        resizable=False,
+    )
     dpg.setup_dearpygui()
+    dpg.set_primary_window("main_window", True)
     dpg.show_viewport()
 
 
